@@ -109,6 +109,7 @@ fn main() {
             files.push(path);
         }
     }
+    files.reverse();
     info!("Finished loading images");
     debug!("Images: {:#?}", files);
     match args.command {
@@ -184,12 +185,13 @@ pub fn img_to_rgb(image: &PathBuf) -> Vec<[u8; 3]> {
 // important: when en/decoding write the switch value and switch afterwards
 /// Encodes images using the provided min and max images
 pub fn encode(min: &MinMaxImg, max: &MinMaxImg, images: &Vec<PathBuf>, output_dir: PathBuf) {
-    let mut use_max = [false; 3];
+    let mut use_max: [bool; 3];
     let mut img: DynamicImage;
     let mut d_min: [u8; 3];
     let mut d_max: [u8; 3];
     for image_path in images {
         info!("Encoding {}...", image_path.display());
+        use_max = [false; 3];
         img = image::open(image_path).expect("Unable to open image");
         let mut new = RgbImage::new(img.width(), img.height());
         for (i, (pixel, new_pixel)) in img.pixels().zip(new.pixels_mut()).enumerate() {
