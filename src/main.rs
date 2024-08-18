@@ -110,6 +110,9 @@ fn main() {
             let (min, max) = get_minmax(&files, max_pixels);           
             min.save("min.png", max_width as u32, max_height as u32);
             max.save("max.png", max_width as u32, max_height as u32);     
+        } else {
+            let (min, max) = 
+            }
         }
 
         encode(&min, &max, &files);
