@@ -1,9 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use image::{self, DynamicImage, GenericImageView, Pixel, Rgb, RgbImage};
 
-use log::{debug, info, trace};
 use clap::*;
+use log::{debug, info, trace};
 
 /// contains a vector of rgb values and the amount of pixels
 pub struct MinMaxImg {
@@ -67,22 +70,20 @@ pub enum Differential {
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
+#[clap(trailing_var_arg = true)]
 struct Arguments {
     /// Select between en or decoding images
-    #[command(subcommand)]
+    #[clap(value_enum)]
     command: EnOrDecode,
-    /// Specify a min image instead of generating one
-    #[arg(short, long)]
-    min: Option<PathBuf>,
-    /// Specify a max image instead of generating one
-    #[arg(short, long)]
-    max: Option<PathBuf>,
+    /// Specify minimum and maximum image paths
+    #[arg(long, short, num_args = 2)]
+    specific_mm: Option<Vec<PathBuf>>,
     /// paths to en or decode from
-    #[arg(trailing_var_arg=true)]
-    images: Vec<PathBuf>
+    #[clap(num_args=1..)]
+    images: Vec<PathBuf>,
 }
 
-#[derive(Subcommand)]
+#[derive(clap::ValueEnum, Clone)]
 enum EnOrDecode {
     Encode,
     Decode,
@@ -92,6 +93,10 @@ fn main() {
     env_logger::init();
     let args = Arguments::parse();
     let mut files: Vec<PathBuf> = Vec::new();
+    if args.images.len() == 0 {
+        eprintln!("Specify at least one image path");
+        std::process::exit(1);
+    }
     for path in args.images {
         if path.is_dir() {
             for subpath in get_files_from_folder(&path) {
@@ -103,97 +108,65 @@ fn main() {
     }
     match args.command {
         EnOrDecode::Encode => {
-        if args.min.is_none() && args.max.is_none() {
-            let (max_width, max_height) = get_largest_image(&files);
-            debug!("Max width: {}\nMax height: {}", max_width, max_height);
-            let max_pixels = max_height * max_width;
-            let (min, max) = get_minmax(&files, max_pixels);           
-            min.save("min.png", max_width as u32, max_height as u32);
-            max.save("max.png", max_width as u32, max_height as u32);     
-        } else {
-            let (min, max) = 
-            }
-        }
-
-        encode(&min, &max, &files);
-        },
-        EnOrDecode::Decode => {}
-    }
-    let args: Vec<_> = std::env::args().collect();
-    info!("Got arguments: {:#?}", args);
-    let mut files: Vec<PathBuf> = Vec::new();
-    if args.len() < 3 {
-        eprintln!("Expected at least 2 arguments: encode/decode, file(s)");
-        std::process::exit(1);
-    }
-    let should_encode: bool = if args[1] == "e" || args[1] == "encode" {
-        info!("Encoding");
-        true
-    } else if args[1] == "d" || args[1] == "decode" {
-        info!("Decoding");
-        false
-    } else {
-        eprintln!("Wrong setting for en/decode. Please use either e, encode, d or decode");
-        std::process::exit(1);
-    };
-
-    for arg in &args[2..] {
-        if arg == "min" {
-
-        } else if arg == "max" {
-
-        } else {
-            let p = Path::new(&arg);
-            if p.is_dir() {
-                for file in get_files_from_folder(&p) {
-                    files.push(file);
-                }
+            let (min, max): (MinMaxImg, MinMaxImg);
+            if args.specific_mm.is_none() {
+                info!("Generating min and max images");
+                let (max_width, max_height) = get_largest_image(&files);
+                debug!("Max width: {}\nMax height: {}", max_width, max_height);
+                let max_pixels = max_height * max_width;
+                (min, max) = get_minmax(&files, max_pixels);
+                min.save("min.png", max_width as u32, max_height as u32);
+                max.save("max.png", max_width as u32, max_height as u32);
             } else {
-                files.push(p.to_path_buf());
+                if let Some(specific_mm) = &args.specific_mm {
+                    (min, max) = (
+                        {
+                            let img = image::open(&specific_mm[0]).unwrap();
+                            MinMaxImg {
+                                pixels: (img.width() * img.height()) as usize,
+                                rgb: img_to_rgb(&specific_mm[0]),
+                            }
+                        },
+                        {
+                            let img = image::open(&specific_mm[1]).unwrap();
+                            MinMaxImg {
+                                pixels: (img.width() * img.height()) as usize,
+                                rgb: img_to_rgb(&specific_mm[1]),
+                            }
+                        },
+                    );
+                } else {
+                    eprintln!("Min and Max specified wrong.");
+                    std::process::exit(1);
+                }
             }
+            encode(&min, &max, &files);
+        }
+        EnOrDecode::Decode => {
+            let (min, max): (Vec<[u8; 3]>, Vec<[u8; 3]>);
+            if let Some(specific_mm) = args.specific_mm {
+                min = img_to_rgb(&specific_mm[0]);
+                max = img_to_rgb(&specific_mm[1]);
+            } else {
+                min = img_to_rgb(&PathBuf::from_str("min.png").unwrap());
+                max = img_to_rgb(&PathBuf::from_str("max.png").unwrap());
+            }
+            decode(&min, &max, &files);
         }
     }
-
-    info!("Files are:\n{:#?}", files);
-
-    if should_encode {
-        let (max_width, max_height) = get_largest_image(&files);
-        debug!("Max width: {}\nMax height: {}", max_width, max_height);
-        let max_pixels = max_height * max_width;
-        let (min, max) = get_minmax(&files, max_pixels);
-
-        min.save("min.png", max_width as u32, max_height as u32);
-        max.save("max.png", max_width as u32, max_height as u32);
-        encode(&min, &max, &files);
-    } else {
-        let min: Vec<[u8; 3]> = image::open("min.png")
-            .unwrap()
-            .pixels()
-            .map(|pixel| {
-                [
-                    pixel.2.channels()[0],
-                    pixel.2.channels()[1],
-                    pixel.2.channels()[2],
-                ]
-            })
-            .collect();
-        let max: Vec<[u8; 3]> = image::open("max.png")
-            .unwrap()
-            .pixels()
-            .map(|pixel| {
-                [
-                    pixel.2.channels()[0],
-                    pixel.2.channels()[1],
-                    pixel.2.channels()[2],
-                ]
-            })
-            .collect();
-        decode(&min, &max, &files);
-    }
-
-    for file in files {
-        println!("{}", file.display());
-    }
+}
+/// Transform an image(path) into a vector of rgb values
+pub fn img_to_rgb(image: &PathBuf) -> Vec<[u8; 3]> {
+    let img = image::open(image).expect(&format!("Unable to open image at '{}'", image.display()));
+    img.pixels()
+        .map(|pxl| {
+            [
+                pxl.2.channels()[0],
+                pxl.2.channels()[1],
+                pxl.2.channels()[2],
+            ]
+        })
+        .collect()
 }
 // important: when en/decoding write the switch value and switch afterwards
 /// Encodes images using the provided min and max images
@@ -318,21 +291,21 @@ pub fn process_color_decode(use_max: &mut bool, min: u8, max: u8, difference: u8
 /// Get largest width and height from a vector of images
 pub fn get_largest_image(images: &Vec<PathBuf>) -> (usize, usize) {
     debug!("Getting largest image dimensions");
-    let mut max_x = 0;
-    let mut max_y = 0;
+    let mut max_w = 0;
+    let mut max_h = 0;
+    let mut max_pixels = 0;
     for image in images {
         trace!("{}", image.display());
         let img = image::open(image).expect(&format!("Unable to open image {}", image.display()));
         let w = img.width() as usize;
         let h = img.height() as usize;
-        if w > max_x {
-            max_x = w;
-        }
-        if h > max_y {
-            max_y = h;
+        if max_pixels < w * h {
+            max_w = w;
+            max_h = h;
+            max_pixels = w * h;
         }
     }
-    (max_x, max_y)
+    (max_w, max_h)
 }
 
 /// Get minimum and maximum images from a given vector of images
