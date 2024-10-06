@@ -1,6 +1,7 @@
 /target
 /encoded
 /decoded
+/test
 nohup.out
 max.png
 min.png
